@@ -128,11 +128,11 @@ test('去重：同一会话 50 次 created 仍只有 2 个 context；多会话�
     agents.push(a)
     p.ctx.emit('agent/created', { agent: a })
   }
-  for (const a of agents) assert.equal(a._registered.length, 4)
+  for (const a of agents) assert.equal(a._registered.length, 5)
   // 卸载其中一个不影响其他
   p.ctx.emit('agent/disposed', { agent: agents[0] })
   assert.equal(agents[0]._registered.length, 0)
-  assert.equal(agents[1]._registered.length, 4)
+  assert.equal(agents[1]._registered.length, 5)
 })
 
 test('brief 预算可配：budget=80 时正文明显更短，且不截断成半个标记', () => {

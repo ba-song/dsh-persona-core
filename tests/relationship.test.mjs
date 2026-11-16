@@ -29,7 +29,10 @@ import {
   writeAttunement,
   normalizeAttunement,
 } from '../lib/relationship.js'
-import { tmpDir } from './helpers/fixtures.mjs'
+import { DatabaseSync } from 'node:sqlite'
+import { bootPlugin, makeAgent, tmpDir } from './helpers/fixtures.mjs'
+
+const OWNER_DIR = '/tmp/fixture-owner-private'
 
 const T0 = 1728000000000 // 2024-10-04T00:00:00Z（= 北京 08:00）
 const near = (a, b, tol = 1e-12) => Math.abs(Number(a) - Number(b)) <= tol
@@ -275,4 +278,56 @@ test('R13 advanceRelationship 失败不抛（无 db / 坏 appraisal / 缺表自�
   assert.equal(typeof s.axes.trust, 'number')
   assert.ok(s.axes.trust >= 0 && s.axes.trust <= 1)
   db.close()
+})
+
+
+test('R14 注入接线：dy-relationship(913) 恒定挂载、非空、无数字；关配置即消失', async () => {
+  const cfg = { inject: { mode: 'full', sessionDirs: [{ dir: OWNER_DIR, mode: 'full' }] }, appraisal: { enabled: false } }
+  const { ctx } = await bootPlugin({ cfg })
+  const agent = makeAgent({ id: 's-rel-inject', cwd: OWNER_DIR })
+  ctx.emit('agent/created', { agent })
+  const rel = agent._registered.find((r) => r.name === 'dy-relationship')
+  assert.ok(rel, '必须挂 dy-relationship')
+  assert.equal(rel.order, 913)
+  assert.equal(rel.interpolate, false)
+  const text = rel.text()
+  assert.ok(text.startsWith('【关系底色】'), text)
+  assert.ok(text.includes(REL_DEFENSE))
+  assert.doesNotMatch(text, /\d/, '注入行不带数字')
+  // 同一会话重复读稳定（同一天、无新事件 → 文案不变）
+  assert.equal(rel.text(), text)
+
+  // 关掉配置 → 不挂（这是"能不能关"的回归，不是退化）
+  const { ctx: ctx2 } = await bootPlugin({ cfg: { ...cfg, inject: { ...cfg.inject, relationship: false } } })
+  const off = makeAgent({ id: 's-rel-off', cwd: OWNER_DIR })
+  ctx2.emit('agent/created', { agent: off })
+  assert.equal(off._registered.find((r) => r.name === 'dy-relationship'), undefined)
+})
+
+test('R15 端到端：session/event 的主人夸奖 → 真的写出一行 relationship_axes', async () => {
+  const cfg = {
+    inject: { mode: 'full', sessionDirs: [{ dir: OWNER_DIR, mode: 'full' }] },
+    emotion: { ingestEnabled: true, threshold: 0.25 },
+    appraisal: { enabled: false },
+  }
+  const { ctx, dir } = await bootPlugin({ cfg })
+  const agent = makeAgent({ id: 's-rel-e2e', cwd: OWNER_DIR })
+  ctx.emit('agent/created', { agent })
+  ctx.emit('session/event', { header: { id: 's-rel-e2e', cwd: OWNER_DIR } }, {
+    type: 'user/message',
+    seq: 1,
+    time: T0,
+    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '谢谢你，好乖' }] },
+  })
+  const db = new DatabaseSync(join(dir, 'persona.db'), { readOnly: true })
+  const rows = db.prepare('SELECT peer_id, axes_json, bands_json, day_key FROM relationship_axes').all()
+  db.close()
+  assert.equal(rows.length, 1, `应只写一行，实际 ${rows.length}`)
+  assert.equal(rows[0].peer_id, 'owner')
+  const axes = JSON.parse(rows[0].axes_json)
+  assert.ok(axes.warmth > 0.1, `warmth 应被主人夸奖推高：${axes.warmth}`)
+  assert.ok(axes.trust >= 0.08)
+  assert.ok(rows[0].day_key, 'day_key 必须落库')
+  const bands = JSON.parse(rows[0].bands_json)
+  assert.equal(typeof bands.warmth, 'number')
 })

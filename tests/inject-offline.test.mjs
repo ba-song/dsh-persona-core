@@ -111,7 +111,7 @@ test('去重：同一会话重复 created 只有两个 context；disposed 后清
   const p = await boot({ mode: 'full' })
   const agent = mountWith(p.ctx)
   p.ctx.emit('agent/created', { agent })
-  assert.deepEqual(agent._registered.map((r) => r.name).sort(), ['dy-emotion', 'dy-emotion-act', 'dy-persona', 'dy-voice'])
+  assert.deepEqual(agent._registered.map((r) => r.name).sort(), ['dy-emotion', 'dy-emotion-act', 'dy-persona', 'dy-relationship', 'dy-voice'])
   p.ctx.emit('agent/disposed', { agent })
   assert.equal(agent._registered.length, 0)
 })
@@ -124,7 +124,7 @@ test('真子智能体在 full/brief 下都不注入；parentSession fork 注入'
       assert.equal(agent._registered.length, 0, `${mode} 下 header=${JSON.stringify(header)} 不应注入`)
     }
     const fork = mountWith(p.ctx, { id: `fork-${mode}`, header: { parentSession: 'p', isSeeded: true, agentPreset: 'standard' } })
-    assert.equal(fork._registered.length, 4, `${mode} 下 fork 应注入`)
+    assert.equal(fork._registered.length, 5, `${mode} 下 fork 应注入（含 dy-relationship）`)
   }
 })
 

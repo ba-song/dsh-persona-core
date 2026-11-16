@@ -141,7 +141,7 @@ test('D7 bind.enabled=false：不写绑定、不读绑定，完全走旧 cwd 白
     bind: { enabled: false },
   })
   const inHome = mount(p, { id: 's-home', cwd: HOME })
-  assert.equal(inHome._registered.length, 4, '旧白名单仍注入')
+  assert.equal(inHome._registered.length, 5, '旧白名单仍注入（含 dy-relationship）')
   const outside = mount(p, { id: 's-ignored', cwd: ELSEWHERE })
   assert.equal(outside._registered.length, 0, 'binding 被忽略')
   const rows = rowsAt(dir)
@@ -190,7 +190,7 @@ test('D10 表不存在时降级：不抛，回退旧 cwd 白名单', async () =>
   const agent = makeAgent({ id: 's-no-table', cwd: HOME })
   const r = injector.mount(agent)
   assert.equal(r.mounted, true, '没有绑定表也要能按旧白名单注入')
-  assert.equal(agent._registered.length, 4)
+  assert.equal(agent._registered.length, 5)
   assert.equal(db.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE name='session_bindings'").get().c, 0)
   db.close()
 })

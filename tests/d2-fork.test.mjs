@@ -69,7 +69,7 @@ test('D2-GUI fork（只有 parentSession）在 cwd 白名单内 → 正常注入
   seed(dir).db.close()
   const p = await bootDir(dir)
   const agent = mount(p, { id: 's-fork-home', cwd: HOME, header: FORK })
-  assert.equal(agent._registered.length, 4, 'fork 应注入 dy-persona/dy-emotion')
+  assert.equal(agent._registered.length, 5, 'fork 应注入 dy-persona/dy-emotion/dy-relationship')
   assert.match(agent._registered.find((r) => r.name === 'dy-persona').text(), /^【人格核心】/)
 })
 
@@ -78,7 +78,7 @@ test('D2-GUI fork + 历史 binding（cwd 不在白名单）→ 按 binding 注�
   seed(dir, { bindingFor: 's-fork-bound' }).db.close()
   const p = await bootDir(dir)
   const agent = mount(p, { id: 's-fork-bound', cwd: ELSEWHERE, header: FORK })
-  assert.equal(agent._registered.length, 4, 'binding 命中的 fork 应注入')
+  assert.equal(agent._registered.length, 5, 'binding 命中的 fork 应注入')
   assert.match(agent._registered.find((r) => r.name === 'dy-persona').text(), /^【人格核心】/)
 })
 
@@ -105,7 +105,7 @@ test('D2-无血缘标记的普通会话照常注入', async () => {
   seed(dir).db.close()
   const p = await bootDir(dir)
   const agent = mount(p, { id: 's-normal', cwd: HOME })
-  assert.equal(agent._registered.length, 4)
+  assert.equal(agent._registered.length, 5)
 })
 
 test('D2-群聊仍拒（即使带 parentSession）', async () => {
