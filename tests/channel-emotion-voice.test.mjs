@@ -102,7 +102,8 @@ test('dy-voice：inject.voiceHint=false 时关闭（只剩 persona/emotion）', 
   const { p } = await boot({ inject: { voiceHint: false } })
   const agent = mount(p, { id: 'v-off', cwd: HOME })
   assert.equal(ctxOf(agent, CONTEXT_VOICE), undefined)
-  assert.deepEqual(agent._registered.map((r) => r.name).sort(), ['dy-emotion', 'dy-emotion-act', 'dy-persona'])
+  // 2026-11-16：dy-relationship 恒定挂（不受 voiceHint 影响）
+  assert.deepEqual(agent._registered.map((r) => r.name).sort(), ['dy-emotion', 'dy-emotion-act', 'dy-persona', 'dy-relationship'])
 })
 
 test('refreshSelf 在渠道会话生效：改名后新旧渠道会话都用新名', async () => {

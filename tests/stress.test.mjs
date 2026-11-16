@@ -120,7 +120,7 @@ test('去重：同一会话 50 次 created 仍只有 2 个 context；多会话�
   const p = await bootWith({ persona: longPersona() })
   const agent = makeAgent({ id: 'dup', cwd: OWNER })
   for (let i = 0; i < RUNS; i++) p.ctx.emit('agent/created', { agent })
-  assert.deepEqual(agent._registered.map((r) => r.name).sort(), ['dy-emotion', 'dy-emotion-act', 'dy-persona', 'dy-voice'])
+  assert.deepEqual(agent._registered.map((r) => r.name).sort(), ['dy-emotion', 'dy-emotion-act', 'dy-persona', 'dy-relationship', 'dy-voice'])
 
   const agents = []
   for (let i = 0; i < 10; i++) {

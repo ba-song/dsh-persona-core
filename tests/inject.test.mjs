@@ -47,7 +47,7 @@ test('F7 真子智能体（origin/delegationDepth）不挂；仅 parentSession �
   // 宿主 fork：parentSession + isSeeded + 普通 agentPreset，无 origin/depth
   const fork = agentAt('sess-fork', OWNER_DIR, { parentSession: 'p', isSeeded: true, agentPreset: 'standard' })
   ctx.emit('agent/created', { agent: fork })
-  assert.equal(fork._registered.length, 4, 'fork 应按她的正常会话注入')
+  assert.equal(fork._registered.length, 5, 'fork 应按她的正常会话注入（含 dy-relationship）')
 })
 
 test('F9 群聊目录不挂（即使在白名单前缀里）', async () => {
@@ -69,7 +69,7 @@ test('F4 同一会话重复 created 只挂一次；disposed 后清理', async ()
   const agent = agentAt('sess-dup', OWNER_DIR)
   ctx.emit('agent/created', { agent })
   ctx.emit('agent/created', { agent })
-  assert.equal(agent._registered.length, 4, '三个 context（persona/emotion/voice），不重复注册')
+  assert.equal(agent._registered.length, 5, 'context（persona/emotion/emotion-act/relationship/voice），不重复注册')
   ctx.emit('agent/disposed', { agent })
   assert.equal(agent._registered.length, 0, 'disposed 后应卸载')
 })

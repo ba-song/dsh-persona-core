@@ -226,7 +226,8 @@ test('B1-全库四处 systemPrompt.context（persona/emotion/voice/style，防�
     const text = readFileSync(pjoin(root, f), 'utf8')
     count += (text.match(/systemPrompt\.context\(/g) ?? []).length
   }
-  assert.equal(count, 8, `persona 侧应有 8 处 context（persona/emotion/voice/emotion-act/style/grievance/world/axes），实际 ${count}`)
+  // 2026-11-16：新增 dy-relationship(913) → 9 处
+  assert.equal(count, 9, `persona 侧应有 9 处 context（persona/emotion/voice/emotion-act/style/grievance/relationship/world/axes），实际 ${count}`)
 })
 
 test('B1-她照顾主人说“你困了”不把自己标成疲惫', () => {
