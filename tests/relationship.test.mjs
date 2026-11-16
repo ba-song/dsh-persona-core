@@ -12,11 +12,13 @@ import { join } from 'node:path'
 import { openDb } from '../lib/db.js'
 import {
   REL_AXES,
+  REL_DEFAULTS,
   REL_DEFENSE,
   DAILY_MOTION_CAP,
   PER_CALL_CAP,
   initialAxes,
   bandsOf,
+  unitsOf,
   decayAxes,
   advanceAxes,
   seededDaily,
@@ -330,4 +332,29 @@ test('R15 端到端：session/event 的主人夸奖 → 真的写出一行 relat
   assert.ok(rows[0].day_key, 'day_key 必须落库')
   const bands = JSON.parse(rows[0].bands_json)
   assert.equal(typeof bands.warmth, 'number')
+})
+
+
+test('R16 同一句"难过"按角色分桶：她的 concern ≠ 主人的 sadness ≠ 被冷落 worry', () => {
+  const base = () => initialAxes(T0)
+  const concern = unitsOf({ emotion: 'concern', intensity: 0.4, valence: -0.3 })
+  assert.ok(concern.warmth > 0, '关心=靠近，warmth 应涨')
+  assert.equal(concern.tension, 0, '关心不该算张力')
+  assert.equal(concern.trust, 0, '关心不该扣信任')
+
+  const sad = unitsOf({ emotion: 'sadness', intensity: 0.5, valence: -0.6 })
+  assert.ok(sad.disclosure > 0, '自述难过=自我暴露 → familiarity 涨')
+  assert.ok(sad.trust < 0, '带一点伤')
+  assert.equal(sad.warmth, 0)
+
+  const cold = unitsOf({ emotion: 'worry', intensity: 0.25, valence: -0.2 })
+  assert.ok(cold.tension > 0, '被冷落 → 张力')
+  assert.equal(cold.warmth, 0, '被冷落不该变暖')
+  assert.equal(cold.disclosure, 0)
+
+  // 实际推进也一致：同一晚连续 3 次 short-reply（owner_cold/worry）不应把 warmth 推高
+  let s = base()
+  for (let k = 0; k < 3; k++) s = advanceAxes(s, { emotion: 'worry', intensity: 0.25, valence: -0.2 }, T0 + k * 60000)
+  assert.equal(s.axes.warmth, REL_DEFAULTS.warmth, 'warmth 不许因被冷落上涨')
+  assert.ok(s.axes.tension > 0)
 })
