@@ -72,8 +72,13 @@ test('R3 跨本地日：motion/repeats 归零，位移额度恢复', () => {
   const nextDay = Date.parse('2024-10-05T00:00:30+08:00')
   assert.equal(localDayKey(nextDay), '2024-10-05')
   assert.equal(localDayKey(nextDay, 'UTC'), '2024-10-04')
-  s = advanceAxes(s, { ...AP, trust: 1 }, nextDay)
-  assert.equal(s.motion.trust, 0, '注意：跨日后 motion 应重置后再累计本轮位移')
+  // 先验证"跨日重置"本身：不带位移地推进一轮，motion 必须归零
+  const reset = advanceAxes(s, { trust: 0, warmth: 0, disclosure: 0, tension: 0 }, nextDay)
+  assert.equal(reset.day_key, '2024-10-05')
+  for (const k of REL_AXES) assert.equal(reset.motion[k], 0, `${k} 跨日应归零`)
+  // 再验证额度恢复：新一天的位移不再被昨天的 motion 挡住
+  s = advanceAxes(reset, { ...AP, trust: 1 }, nextDay + 60000)
+  assert.ok(s.motion.trust > 0 && s.motion.trust <= PER_CALL_CAP + 1e-9)
   assert.ok(s.axes.trust > capped, `跨日后应还能涨：${capped} → ${s.axes.trust}`)
   assert.equal(s.day_key, '2024-10-05')
 })
@@ -124,9 +129,11 @@ test('R6 滞回上下行边界（阈值 0.25 的那道）', () => {
   assert.equal(bandsOf({ tension: 0.15 }, {}).tension, 1)
   assert.equal(bandsOf({ tension: 0.14 }, {}).tension, 0)
   assert.equal(bandsOf({ tension: 0.7 }, {}).tension, 3)
-  // 三档全测
-  assert.equal(bandsOf({ trust: 0.51 }, { trust: 1 }).trust, 2)
-  assert.equal(bandsOf({ trust: 0.76 }, { trust: 2 }).trust, 3)
+  // 三档全测（0.51/0.76 都还在 0.035 死区里，不许翻档；越过才翻）
+  assert.equal(bandsOf({ trust: 0.51 }, { trust: 1 }).trust, 1, '0.51 在 0.5 阈值死区内')
+  assert.equal(bandsOf({ trust: 0.54 }, { trust: 1 }).trust, 2, '0.54 越过 0.535')
+  assert.equal(bandsOf({ trust: 0.76 }, { trust: 2 }).trust, 2, '0.76 在 0.75 阈值死区内')
+  assert.equal(bandsOf({ trust: 0.79 }, { trust: 2 }).trust, 3, '0.79 越过 0.785')
 })
 
 test('R7 两联系人隔离：A 的推进不碰 B', () => {
@@ -173,26 +180,28 @@ test('R9 peerIdOf：显式 contactId > QQ 私聊目录名 > 群 > owner', () => 
 })
 
 test('R10 负向 warmth 也有重复折扣（我们相对 Anima 的修正）', () => {
-  const one = advanceAxes(initialAxes(T0), { emotion: 'anger', trust: 0, warmth: -1, disclosure: 0, tension: 0 }, T0)
-  let many = initialAxes(T0)
-  // 先攒 4 次正向（repeats=4）再打负向，应与"第一轮就负向"不同：负向被折价
-  for (let i = 0; i < 4; i++) many = advanceAxes(many, { warmth: 1 }, T0)
-  const freshNeg = advanceAxes(initialAxes(T0), { warmth: -1 }, T0)
-  const afterPosNeg = advanceAxes(many, { warmth: -1 }, T0)
-  const dropFresh = freshNeg.axes.warmth - initialAxes(T0).axes.warmth
-  const dropAfter = afterPosNeg.axes.warmth - many.axes.warmth
-  assert.ok(dropFresh < 0 && dropAfter < 0)
-  assert.ok(dropAfter > dropFresh, `负向应被重复折扣压小：fresh=${dropFresh} after=${dropAfter}`)
+  // 同基线（warmth=0.5、同一时刻、当日额度未用）只改 repeats_neg → 负向位移应更小
+  const base = () => {
+    const s = initialAxes(T0)
+    s.axes.warmth = 0.5
+    s.day_key = localDayKey(T0)
+    return s
+  }
+  const fresh = base()
+  const habituated = { ...base(), repeats_neg: 4 }
+  const dropFresh = advanceAxes(fresh, { warmth: -1 }, T0).axes.warmth - 0.5
+  const dropHab = advanceAxes(habituated, { warmth: -1 }, T0).axes.warmth - 0.5
+  assert.ok(dropFresh < 0 && dropHab < 0)
+  assert.ok(dropHab > dropFresh, `负向应被重复折扣压小：fresh=${dropFresh} hab=${dropHab}`)
   // 反向：正向习惯化（Anima 原样）
   const a = advanceAxes(initialAxes(T0), { warmth: 1 }, T0)
-  const b = advanceAxes(initialAxes(T0), { warmth: 1 }, T0)
   const c = advanceAxes(a, { warmth: 1 }, T0)
   const gain1 = a.axes.warmth - initialAxes(T0).axes.warmth
   const gain2 = c.axes.warmth - a.axes.warmth
   assert.ok(gain1 > gain2, '正向应递减')
   assert.ok(gain2 > 0)
-  assert.ok(one.axes.warmth >= 0)
-  assert.ok(b.axes.warmth > 0)
+  assert.equal(a.repeats, 1)
+  assert.equal(c.repeats, 2)
 })
 
 test('R11 seededDaily：双字节 FNV-1a 变体、可复现、范围 [-1,1)；wobble 同日幂等', () => {
@@ -210,7 +219,12 @@ test('R11 seededDaily：双字节 FNV-1a 变体、可复现、范围 [-1,1)；wo
     for (const b of Buffer.from(str, 'utf8')) h = Math.imul((h ^ b) >>> 0, 16777619) >>> 0
     return (h % 20000) / 10000 - 1
   }
-  assert.notEqual(seededDaily('seed:2024-10-04:p'), byteWise('seed:2024-10-04:p'))
+  // 纯 ASCII 时双字节与逐字节恰好同值（UTF-16LE 高字节为 0），CJK 才会分叉——
+  // 所以"照名字用标准 FNV-1a"在中文种子下会得到完全不同的一天天气。
+  const ascii = 'seed:2024-10-04:p'
+  assert.equal(seededDaily(ascii), byteWise(ascii), 'ASCII 下两者同值（正常）')
+  const cjk = '主人:汐:2024-10-04:p'
+  assert.notEqual(seededDaily(cjk), byteWise(cjk), 'CJK 种子必须分叉（证明用的是双字节变体）')
 
   const s = initialAxes(T0)
   const a = decayAxes(s, T0, { seed: 'seed-A' })
@@ -226,7 +240,9 @@ test('R12 attunement：intent 白名单、字段截断、avoid 上限、非法�
   assert.equal(normalizeAttunement({}), null)
   const ok = normalizeAttunement({ intent: 'listen', user_cue: '主人想被听', uncertainty: '不确定是否只是抱怨', avoid: ['别给建议', '', '别问为什么', '别总结', '别下结论'] })
   assert.equal(ok.intent, 'listen')
-  assert.equal(ok.avoid.length, 2, 'avoid 上限 2（本插件口径，防变相 CoT）')
+  assert.equal(ok.avoid.length, 4, '空串被过滤')
+  const many = normalizeAttunement({ intent: 'space', avoid: Array.from({ length: 20 }, (_, i) => `别${i}`) })
+  assert.equal(many.avoid.length, 8, 'avoid 上限 8（Anima 口径）')
   assert.equal(normalizeAttunement({ intent: 'bogus', user_cue: 'x' }).intent, '', '非法 intent 落空串')
   const long = normalizeAttunement({ intent: 'answer', user_cue: 'x'.repeat(2000) })
   assert.equal(long.userCue.length, 500)

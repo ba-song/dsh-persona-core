@@ -26,7 +26,8 @@ test('N2 白名单内私聊 + full：挂 dy-persona(900) 与 dy-emotion(910)，�
   const agent = agentAt('sess-2', OWNER_DIR)
   ctx.emit('agent/created', { agent })
   const names = agent._registered.map((r) => r.name).sort()
-  assert.deepEqual(names, ['dy-emotion', 'dy-emotion-act', 'dy-persona', 'dy-voice'])
+  // 2026-11-16：新增 dy-relationship(913)，恒定输出关系底色（不设阈值门控）
+  assert.deepEqual(names, ['dy-emotion', 'dy-emotion-act', 'dy-persona', 'dy-relationship', 'dy-voice'])
   const personaCtx = agent._registered.find((r) => r.name === 'dy-persona')
   const emotionCtx = agent._registered.find((r) => r.name === 'dy-emotion')
   assert.equal(personaCtx.order, 900)
