@@ -111,6 +111,11 @@ test('rejects malformed episodes, non-finite expiry, and out-of-range intensity'
 test('confidence outside [0,1] is unknown and cannot activate a new episode', () => {
   assert.equal(classifyEmotionConfidence(-0.1), 'unknown')
   assert.equal(classifyEmotionConfidence(1.1), 'unknown')
+  assert.equal(classifyEmotionConfidence(NaN), 'unknown')
+  assert.equal(classifyEmotionConfidence(Infinity), 'unknown')
+  assert.equal(classifyEmotionConfidence(-Infinity), 'unknown')
+  assert.equal(classifyEmotionConfidence(0), 'uncertain')
+  assert.equal(classifyEmotionConfidence(1), 'active_candidate')
   const result = composeEmotionEpisodes([
     ep({ confidence: -0.1 }),
     ep({ confidence: 1.1, emotion: 'fear' }),
