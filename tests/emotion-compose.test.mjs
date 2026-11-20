@@ -1,0 +1,86 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { classifyEmotionConfidence, composeEmotionEpisodes } from '../lib/emotion-compose.js'
+
+const NOW = 1_000_000
+const ep = (overrides = {}) => ({
+  id: 1, emotion: 'joy', target: 'self', experiencer: 'self',
+  at: NOW, intensity: 0.8, half_life_s: 3600,
+  expires_at: NOW + 10_000_000, confidence: 0.9,
+  ...overrides,
+})
+
+test('confidence classification preserves unknown rather than inventing certainty', () => {
+  assert.equal(classifyEmotionConfidence(undefined), 'unknown')
+  assert.equal(classifyEmotionConfidence(0.7), 'active_candidate')
+  assert.equal(classifyEmotionConfidence(0.5), 'appraisal_only')
+  assert.equal(classifyEmotionConfidence(0.2), 'uncertain')
+})
+
+test('same emotion and target merges by maximum decayed intensity, never sum', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 1, intensity: 0.7 }),
+    ep({ id: 2, intensity: 0.9, at: NOW - 3600_000 }),
+  ], { now: NOW })
+  assert.equal(result.total, 1)
+  assert.equal(result.emotions[0].intensity, 0.7)
+  assert.deepEqual(result.emotions[0].sourceIds, [1, 2])
+})
+
+test('same label on different targets remains separate', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 1, target: 'self' }),
+    ep({ id: 2, target: 'owner' }),
+  ], { now: NOW })
+  assert.equal(result.total, 2)
+  assert.deepEqual(result.allEmotions.map((x) => x.target).sort(), ['owner', 'self'])
+})
+
+test('positive and negative emotions coexist without cancellation', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 1, emotion: 'joy', intensity: 0.8 }),
+    ep({ id: 2, emotion: 'sadness', intensity: 0.7 }),
+  ], { now: NOW })
+  assert.deepEqual(result.allEmotions.map((x) => x.emotion).sort(), ['joy', 'sadness'])
+})
+
+test('expired and decayed-below-floor episodes are omitted, source history is untouched', () => {
+  const source = [
+    ep({ id: 1, expires_at: NOW }),
+    ep({ id: 2, at: NOW - 20 * 3600_000, half_life_s: 3600 }),
+  ]
+  const snapshot = structuredClone(source)
+  const result = composeEmotionEpisodes(source, { now: NOW })
+  assert.equal(result.total, 0)
+  assert.deepEqual(source, snapshot)
+})
+
+test('legacy episodes are grandfathered; new low-confidence items are not active', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 1, confidence: 0.5, legacy: true }),
+    ep({ id: 2, confidence: 0.5, legacy: false, emotion: 'sadness' }),
+    ep({ id: 3, confidence: 0.2, legacy: false, emotion: 'anger' }),
+  ], { now: NOW })
+  assert.deepEqual(result.allEmotions.map((x) => x.emotion), ['joy'])
+  assert.equal(result.allEmotions[0].confidenceClass, 'appraisal_only')
+})
+
+test('stable deterministic ordering and explicit pagination metadata', () => {
+  const inputs = [
+    ep({ id: 3, emotion: 'sadness', intensity: 0.6 }),
+    ep({ id: 2, emotion: 'anger', intensity: 0.6 }),
+    ep({ id: 1, emotion: 'joy', intensity: 0.6 }),
+  ]
+  const a = composeEmotionEpisodes(inputs, { now: NOW, displayLimit: 2 })
+  const b = composeEmotionEpisodes([...inputs].reverse(), { now: NOW, displayLimit: 2 })
+  assert.deepEqual(a.allEmotions.map((x) => x.emotion), b.allEmotions.map((x) => x.emotion))
+  assert.equal(a.emotions.length, 2)
+  assert.equal(a.total, 3)
+  assert.equal(a.hasMore, true)
+  assert.equal(a.allEmotions.length, 3)
+})
+
+test('invalid arguments fail loudly rather than silently truncating', () => {
+  assert.throws(() => composeEmotionEpisodes({}, { now: NOW }), /episodes must be an array/)
+  assert.throws(() => composeEmotionEpisodes([], { now: NOW, displayLimit: 0 }), /displayLimit/)
+})
