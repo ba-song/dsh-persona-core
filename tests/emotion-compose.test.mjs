@@ -84,3 +84,63 @@ test('invalid arguments fail loudly rather than silently truncating', () => {
   assert.throws(() => composeEmotionEpisodes({}, { now: NOW }), /episodes must be an array/)
   assert.throws(() => composeEmotionEpisodes([], { now: NOW, displayLimit: 0 }), /displayLimit/)
 })
+
+test('preserves both episode and appraisal identifiers plus explicit sourceIds', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 12, appraisal_id: 88, appraisalId: 89, episodeId: 13, sourceIds: ['raw:4', 'event:5'] }),
+  ], { now: NOW })
+  assert.deepEqual(result.allEmotions[0].sourceIds, [12, 88, 89, 13, 'raw:4', 'event:5'])
+})
+
+test('rejects malformed episodes, non-finite expiry, and out-of-range intensity', () => {
+  const result = composeEmotionEpisodes([
+    null,
+    ep({ emotion: '' }),
+    ep({ target: '' }),
+    ep({ half_life_s: undefined }),
+    ep({ intensity: NaN }),
+    ep({ intensity: Infinity }),
+    ep({ intensity: 1.01 }),
+    ep({ intensity: -0.01 }),
+    ep({ expires_at: NaN }),
+    ep({ expires_at: Infinity }),
+  ], { now: NOW })
+  assert.equal(result.total, 0)
+})
+
+test('confidence outside [0,1] is unknown and cannot activate a new episode', () => {
+  assert.equal(classifyEmotionConfidence(-0.1), 'unknown')
+  assert.equal(classifyEmotionConfidence(1.1), 'unknown')
+  const result = composeEmotionEpisodes([
+    ep({ confidence: -0.1 }),
+    ep({ confidence: 1.1, emotion: 'fear' }),
+    ep({ confidence: undefined, emotion: 'sadness' }),
+  ], { now: NOW })
+  assert.equal(result.total, 0)
+})
+
+test('future timestamps have zero age and remain bounded by expiry', () => {
+  const result = composeEmotionEpisodes([
+    ep({ at: NOW + 5000, intensity: 0.75, expires_at: NOW + 10000 }),
+  ], { now: NOW })
+  assert.equal(result.total, 1)
+  assert.equal(result.allEmotions[0].intensity, 0.75)
+})
+
+test('codepoint ordering is stable across input order and retains non-ASCII keys', () => {
+  const inputs = [
+    ep({ id: 'z', emotion: '情绪', target: '目标' }),
+    ep({ id: 'a', emotion: 'anger', target: 'self' }),
+    ep({ id: 'b', emotion: 'joy', target: 'owner' }),
+  ]
+  const a = composeEmotionEpisodes(inputs, { now: NOW })
+  const b = composeEmotionEpisodes([...inputs].reverse(), { now: NOW })
+  assert.deepEqual(a.allEmotions.map(x => [x.target, x.emotion]), b.allEmotions.map(x => [x.target, x.emotion]))
+})
+
+test('displayLimit above total is valid and never drops records', () => {
+  const result = composeEmotionEpisodes([ep()], { now: NOW, displayLimit: 1000 })
+  assert.equal(result.total, 1)
+  assert.equal(result.emotions.length, 1)
+  assert.equal(result.hasMore, false)
+})
