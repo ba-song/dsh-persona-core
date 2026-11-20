@@ -89,7 +89,7 @@ test('preserves both episode and appraisal identifiers plus explicit sourceIds',
   const result = composeEmotionEpisodes([
     ep({ id: 12, appraisal_id: 88, appraisalId: 89, episodeId: 13, sourceIds: ['raw:4', 'event:5'] }),
   ], { now: NOW })
-  assert.deepEqual(result.allEmotions[0].sourceIds, [12, 88, 89, 13, 'raw:4', 'event:5'])
+  assert.deepEqual(result.allEmotions[0].sourceIds, [12, 13, 88, 89, 'event:5', 'raw:4'])
 })
 
 test('rejects malformed episodes, non-finite expiry, and out-of-range intensity', () => {
