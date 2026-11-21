@@ -58,6 +58,7 @@
 ### 3.1 emotion_event：原始情绪相关事件
 
 保留现有字段，新增：
+- `experiencer_type TEXT NOT NULL DEFAULT 'unknown'` 与 `experiencer_id TEXT NOT NULL DEFAULT ''`：事件归属的情绪体验者，和 actor/subject 分开。
 - `dedupe_key TEXT NOT NULL`：同一来源事件的稳定幂等键；写入前必须规范化且非空。
 - 唯一约束 `(self_id, experiencer_type, experiencer_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径；旧行用确定性 legacy key 回填。
 - `actor_type TEXT NOT NULL DEFAULT 'unknown'`
