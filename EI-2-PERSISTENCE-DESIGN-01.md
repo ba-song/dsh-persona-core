@@ -80,7 +80,7 @@
 
 **统一模型裁决：采用“一条 appraisal + 多条 appraisal_items”**，不再并存“一情绪一条 appraisal”的第二种新模型。新增 `emotion_appraisal_items` 子表，每行代表一个情绪维度，字段至少包括 `appraisal_id, item_index, emotion, intensity, confidence, target_type, target_id, evidence_json`，并以 `(appraisal_id,item_index)` 唯一。正负情绪可同时存在，不做净额抵消。
 
-为兼容旧表，`emotion_appraisal` 原有 `emotion/intensity/target/confidence` 列暂时保留；旧接口继续读取。新接口以 items 为权威；旧列只作为单项目兼容镜像（多项目时镜像规则须在 EI-2A 测试锁定，不允许旧列反向覆盖 items）。同一 event 的重评通过 `appraisal_version` 递增和 `supersedes_appraisal_id` 形成链；同一事件同一版本唯一，必须建立 `CREATE UNIQUE INDEX ... ON emotion_appraisal(event_id, appraisal_version)`（若 event_id 允许 NULL，则先定义 NULL 行的迁移/约束策略，不能依赖 SQLite UNIQUE 对 NULL 的默认行为实现幂等）。保留 `accepted`，新接口区分 accepted、rejected、needs_review，旧 integer 列仍兼容。
+为兼容旧表，`emotion_appraisal` 原有 `emotion/intensity/target/confidence` 列暂时保留；旧接口继续读取。新接口以 items 为权威；旧列只作为单项目兼容镜像（多项目时镜像规则须在 EI-2A 测试锁定，不允许旧列反向覆盖 items）。同一 event 的重评通过 `appraisal_version` 递增和 `supersedes_appraisal_id` 形成链；同一事件同一版本唯一，必须建立 `CREATE UNIQUE INDEX IF NOT EXISTS uq_emotion_appraisal_event_version ON emotion_appraisal(event_id, appraisal_version)`；EI-2A 需先证明 `event_id` 对新写入 NOT NULL。旧 NULL 行不参与新写入唯一性语义，必须在迁移报告中单独统计，不得把 SQLite 对 NULL 的 UNIQUE 行为误当成幂等保障。保留 `accepted`，新接口区分 accepted、rejected、needs_review，旧 integer 列仍兼容。
 
 `evidence_json` 仅保存可追溯的规则/观察字段和来源引用，不保存私有思维链；原始消息正文仍按既有 provenance 策略管理。
 
@@ -94,6 +94,7 @@
 - `confidence REAL`（允许 NULL 表示未知，不得自动补成 1）
 - `ended_at INTEGER`
 - `end_reason TEXT NOT NULL DEFAULT ''`
+- `episode_revision INTEGER NOT NULL DEFAULT 1`（每次可发布更新递增；outbox idem_key 使用该 revision）
 
 生命周期优先级：`ended_at` 是显式结束时刻，优先于 `expires_at`；投影仅在 `now < ended_at` 且 `now < expires_at`（两者存在时）时活跃。若两者均存在，较早者决定退出时间；显式结束只补充原因，不延长自然到期。`ended_at <= at` 视为无效 episode 并进入诊断，不删除原行。
 
