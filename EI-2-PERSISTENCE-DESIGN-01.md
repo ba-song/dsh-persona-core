@@ -1,7 +1,7 @@
 # EI-2 持久化与跨模块关联设计（提案 01）
 
 > 仓库：`ba-song/dsh-persona-core`  
-> 设计基线：`main` = `a84c7badd1e6c971a66b6c39dd4f7ab795df4b90`；EI-1 分支相对 main ahead 13 commits（以 950eb423 为设计基线）。  
+> 设计基线：`main` = `a84c7badd1e6c971a66b6c39dd4f7ab795df4b90`；本提案最初基于 `950eb423`，修复分支当前基线为 `b1cac0fa8eef6b267a4be94ef69772da6cff5c71`（后续提交数以 GitHub compare 实时结果为准）。  
 > 性质：**设计提案，不是已批准迁移，也不是生产实施授权。** 本文只定义兼容式演进方案；不改生产 DB、不部署、不重启、不改变真实情绪状态。
 
 ## 0. 设计目标
@@ -16,7 +16,7 @@
 2. 现有 `emotion_event` 有 `self_id, actor, subject, target, source_ref, payload_json, confidence` 等字段；`self_id` 是 persona 主体键，不等于情绪体验者。
 3. 现有 `emotion_appraisal` 通过 `event_id` 关联事件，有 `emotion/intensity/target/confidence/accepted/source` 等字段，但没有显式 experiencer 命名空间。
 4. 现有 `emotion_episodes` 有 `self_id, at, emotion, intensity, cause, target, half_life_s, expires_at, appraisal_id, msg_ref`，缺少 experiencer、目标类型、独立来源集合和结束原因。
-5. EI-1 的 `lib/emotion-compose.js` 是纯函数投影层，尚未接入 DB、appraisal、注入或 memory。当前目标提交 950eb423 已将缺失 experiencer 默认改为 `unknown`，并增加 typed `sourceRefs`；但 sourceRefs 别名完整性测试失败，且 experiencerId 前缀语义尚未收口。修复分支 `fix/ei1-source-ref-experiencer-contract` 正在修正这些问题，未验收前不得视为通过。
+5. EI-1 的 `lib/emotion-compose.js` 是纯函数投影层，尚未接入 DB、appraisal、注入或 memory。修复分支 `fix/ei1-source-ref-experiencer-contract` 已收口 experiencer 与 typed `sourceRefs` 契约；`b1cac0f` 的隔离验收仍有一项 `sourceIds` 兼容字段缺少 `episode_id` 的失败。GPT 已在后续提交 `b8d598e89816bd1efeb49ad44190e7f0c7900e60` 补入该别名，但定向/全量测试尚未复跑，因此当前状态仍为 NOT RUN（不得标记 PASS）。
 6. 旧 emotion_state / timeline / points 与新 event/appraisal/episode 并存，必须保持既有 API 和旧表可用，不能一次性替换旧状态模型。
 
 ## 2. 核心语义：身份与对象必须分开
@@ -60,7 +60,7 @@
 保留现有字段，新增：
 - `experiencer_type TEXT NOT NULL DEFAULT 'unknown'` 与 `experiencer_id TEXT NOT NULL DEFAULT ''`：事件归属的情绪体验者，和 actor/subject 分开。
 - `dedupe_key TEXT NOT NULL`：同一来源事件的稳定幂等键；写入前必须规范化且非空。
-- 唯一约束 `(self_id, experiencer_type, experiencer_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径；旧行用确定性 legacy key 回填。
+- 唯一约束 `UNIQUE(self_id, experiencer_type, experiencer_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径；旧行用确定性 legacy key 回填。迁移前先规范化空白与大小写规则；不得把随机值作为重试时变化的 dedupe_key。
 - `actor_type TEXT NOT NULL DEFAULT 'unknown'`
 - `actor_id TEXT NOT NULL DEFAULT ''`
 - `occurred_at INTEGER`（原始发生时间；旧行可回填 `at`）
@@ -80,7 +80,7 @@
 
 **统一模型裁决：采用“一条 appraisal + 多条 appraisal_items”**，不再并存“一情绪一条 appraisal”的第二种新模型。新增 `emotion_appraisal_items` 子表，每行代表一个情绪维度，字段至少包括 `appraisal_id, item_index, emotion, intensity, confidence, target_type, target_id, evidence_json`，并以 `(appraisal_id,item_index)` 唯一。正负情绪可同时存在，不做净额抵消。
 
-为兼容旧表，`emotion_appraisal` 原有 `emotion/intensity/target/confidence` 列暂时保留；旧接口继续读取。新接口以 items 为权威；旧列只作为单项目兼容镜像（多项目时镜像规则须在 EI-2A 测试锁定，不允许旧列反向覆盖 items）。同一 event 的重评通过 `appraisal_version` 递增和 `supersedes_appraisal_id` 形成链；同一事件同一版本唯一。保留 `accepted`，新接口区分 accepted、rejected、needs_review，旧 integer 列仍兼容。
+为兼容旧表，`emotion_appraisal` 原有 `emotion/intensity/target/confidence` 列暂时保留；旧接口继续读取。新接口以 items 为权威；旧列只作为单项目兼容镜像（多项目时镜像规则须在 EI-2A 测试锁定，不允许旧列反向覆盖 items）。同一 event 的重评通过 `appraisal_version` 递增和 `supersedes_appraisal_id` 形成链；同一事件同一版本唯一，必须建立 `CREATE UNIQUE INDEX ... ON emotion_appraisal(event_id, appraisal_version)`（若 event_id 允许 NULL，则先定义 NULL 行的迁移/约束策略，不能依赖 SQLite UNIQUE 对 NULL 的默认行为实现幂等）。保留 `accepted`，新接口区分 accepted、rejected、needs_review，旧 integer 列仍兼容。
 
 `evidence_json` 仅保存可追溯的规则/观察字段和来源引用，不保存私有思维链；原始消息正文仍按既有 provenance 策略管理。
 
@@ -95,6 +95,8 @@
 - `ended_at INTEGER`
 - `end_reason TEXT NOT NULL DEFAULT ''`
 
+生命周期优先级：`ended_at` 是显式结束时刻，优先于 `expires_at`；投影仅在 `now < ended_at` 且 `now < expires_at`（两者存在时）时活跃。若两者均存在，较早者决定退出时间；显式结束只补充原因，不延长自然到期。`ended_at <= at` 视为无效 episode 并进入诊断，不删除原行。
+
 保留既有 `at/emotion/intensity/cause/target/half_life_s/expires_at/appraisal_id/msg_ref`，避免破坏旧查询。旧 `target` 字段继续作为兼容展示文本；新逻辑以 target_type/id 为准。
 
 episode 表示持续体验，不是当前心情快照。自然到期只使其退出 active projection；不删除历史行。显式结束写 `ended_at/end_reason`，不物理删除。
@@ -104,7 +106,7 @@ episode 表示持续体验，不是当前心情快照。自然到期只使其退
 新增关联表：
 - `id INTEGER PRIMARY KEY`
 - `episode_id INTEGER NOT NULL`
-- `source_type TEXT NOT NULL`（建议白名单：event、appraisal、raw_message、tool_call、memory、external）
+- `source_type TEXT NOT NULL`（规范白名单：`event | appraisal | episode | raw_message | tool_call | memory | external | legacy`。EI-1 归一化：`raw → raw_message`；`episode` 保持 `episode`；`legacy` 仅作为不可解析的兼容来源保留，禁止据此授权或跨表 join；未知 type 拒绝入库，不得把任意 `x:y` 前缀自动信任为类型）。
 - `source_id TEXT NOT NULL`
 - `role TEXT NOT NULL DEFAULT 'evidence'`（evidence、trigger、context、corroboration）
 - `created_at INTEGER NOT NULL`
@@ -142,7 +144,7 @@ EI-1 输出保留 `sourceIds` 仅作兼容字段；新契约使用 `sourceRefs: 
 
 `emotion_outbox`：
 - `event_id TEXT PRIMARY KEY`（UUID；与 `emotion_event.id` 的整数主键完全分离）
-- `idem_key TEXT NOT NULL UNIQUE`（按 episode_id + event_type + episode_revision 确定；重试必须复用同一 event_id/idem_key）
+- `idem_key TEXT NOT NULL UNIQUE`（按 `episode_id + event_type + episode_revision` 确定；因此 `emotion_episodes` 必须新增 `episode_revision INTEGER NOT NULL DEFAULT 1`，每次可发布的更新递增；重试必须复用同一 event_id/idem_key，同一 revision 的重复发布不得生成新键）
 - `contract_version INTEGER NOT NULL`
 - `event_type TEXT NOT NULL`（emotion.episode.created / updated / ended）
 - `payload_json TEXT NOT NULL`
@@ -180,8 +182,8 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
   "eventId": "uuid",
   "eventType": "emotion.episode.created",
   "episode": {
-    "id": "episode:123",
-    "experiencer": {"type": "self", "id": "self:..."},
+    "id": "123",
+    "experiencer": {"type": "self", "id": "..."},
     "target": {"type": "owner", "id": "owner"},
     "emotion": "joy",
     "intensity": 0.82,
@@ -189,7 +191,7 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
     "occurredAt": 1790000000000,
     "halfLifeSeconds": 21600,
     "expiresAt": 1790086400000,
-    "sourceRefs": [{"type": "appraisal", "id": "appraisal:88", "role": "evidence"}]
+    "sourceRefs": [{"type": "appraisal", "id": "88", "role": "evidence"}]
   }
 }
 ```
@@ -208,6 +210,8 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
 8. 回滚只关闭新消费者/投影并保留新增表数据；不删除历史事件和来源关联。
 
 ## 7. 必须覆盖的测试
+
+DDL 验收还必须断言：`UNIQUE(event_id, appraisal_version)` 能拒绝同事件同版本重复；`episode_revision` 对每次可发布更新单调递增；`ended_at` 与 `expires_at` 同时存在时按较早时刻退出投影；`raw` 映射 `raw_message`、`legacy` 不可解析、未知 source type 被拒绝。
 
 - 体验者 self/owner/third_party/unknown 分离；缺字段永远不会默认为 self。
 - `experiencer_id` 裸 ID、已带匹配前缀、前缀冲突、unknown+非空 ID、旧式 `experiencer='self:<id>'`。
