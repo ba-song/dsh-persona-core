@@ -1,7 +1,7 @@
 # EI-2 持久化与跨模块关联设计（提案 01）
 
 > 仓库：`ba-song/dsh-persona-core`  
-> 设计基线：`main` = `a84c7badd1e6c971a66b6c39dd4f7ab795df4b90`；EI-1 分支相对 main ahead 9 commits。  
+> 设计基线：`main` = `a84c7badd1e6c971a66b6c39dd4f7ab795df4b90`；EI-1 分支相对 main ahead 13 commits（以 950eb423 为设计基线）。  
 > 性质：**设计提案，不是已批准迁移，也不是生产实施授权。** 本文只定义兼容式演进方案；不改生产 DB、不部署、不重启、不改变真实情绪状态。
 
 ## 0. 设计目标
@@ -16,7 +16,7 @@
 2. 现有 `emotion_event` 有 `self_id, actor, subject, target, source_ref, payload_json, confidence` 等字段；`self_id` 是 persona 主体键，不等于情绪体验者。
 3. 现有 `emotion_appraisal` 通过 `event_id` 关联事件，有 `emotion/intensity/target/confidence/accepted/source` 等字段，但没有显式 experiencer 命名空间。
 4. 现有 `emotion_episodes` 有 `self_id, at, emotion, intensity, cause, target, half_life_s, expires_at, appraisal_id, msg_ref`，缺少 experiencer、目标类型、独立来源集合和结束原因。
-5. EI-1 的 `lib/emotion-compose.js` 是纯函数投影层，尚未接入 DB、appraisal、注入或 memory。当前缺失 experiencer 时默认 `self`，且将 episode/appraisal/source ID 混装到 `sourceIds`。
+5. EI-1 的 `lib/emotion-compose.js` 是纯函数投影层，尚未接入 DB、appraisal、注入或 memory。当前目标提交 950eb423 已将缺失 experiencer 默认改为 `unknown`，并增加 typed `sourceRefs`；但 sourceRefs 别名完整性测试失败，且 experiencerId 前缀语义尚未收口。修复分支 `fix/ei1-source-ref-experiencer-contract` 正在修正这些问题，未验收前不得视为通过。
 6. 旧 emotion_state / timeline / points 与新 event/appraisal/episode 并存，必须保持既有 API 和旧表可用，不能一次性替换旧状态模型。
 
 ## 2. 核心语义：身份与对象必须分开
@@ -26,7 +26,7 @@
 采用命名空间二元组：
 
 - `experiencer_type`: `self | owner | third_party | unknown`
-- `experiencer_id`: 稳定主体 ID；self/owner 可用各自稳定 ID，third_party 必须有可区分 ID；unknown 时为空。
+- `experiencer_id`: **裸 ID（不含类型前缀）**；self/owner 使用各自稳定主体 ID，third_party 使用可区分 ID；unknown 时必须为空。类型命名空间只由 `experiencer_type` 提供。
 
 解释：
 - `self`：汐自身真实体验的情绪。
@@ -34,13 +34,13 @@
 - `third_party`：对话中第三方的情绪。
 - `unknown`：证据不足，不能猜测体验者。
 
-**禁止默认 experiencer=self。** 历史记录没有明确证据时迁移为 unknown；不得仅因为记录位于汐的 persona.db 就推断为汐的情绪。
+**禁止默认 experiencer=self。** 历史记录没有明确证据时迁移为 unknown；不得仅因为记录位于汐的 persona.db 就推断为汐的情绪。输入层若收到与 `experiencer_type` 相同的旧式前缀（如 `owner:123`），可剥离前缀后存裸 ID；前缀类型冲突则拒绝该归属/降为 unknown。旧字段 `experiencer='self:1d2'` 可按已知命名空间解析为 type=self、id=1d2。
 
 ### 2.2 Target（情绪指向对象）
 
 采用独立命名空间：
 
-- `target_type`: `self | owner | third_party | object | situation | unknown`
+- `target_type`: `self | owner | third_party | object | tool | situation | unknown`（保留现有 `lib/appraisal.js` 的 `tool` 目标语义，不把它静默折叠为 object）
 - `target_id`: 对应稳定 ID；无法识别时为空。
 
 例子：
@@ -58,6 +58,8 @@
 ### 3.1 emotion_event：原始情绪相关事件
 
 保留现有字段，新增：
+- `dedupe_key TEXT NOT NULL`：同一来源事件的稳定幂等键；写入前必须规范化且非空。
+- 唯一约束 `(self_id, actor_type, actor_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径；旧行用确定性 legacy key 回填。
 - `actor_type TEXT NOT NULL DEFAULT 'unknown'`
 - `actor_id TEXT NOT NULL DEFAULT ''`
 - `occurred_at INTEGER`（原始发生时间；旧行可回填 `at`）
@@ -66,16 +68,18 @@
 
 `actor` / `subject` / `target` 旧文本列继续保留供兼容和展示；新代码不得仅凭自由文本做身份授权或跨插件 join。事件记录描述“发生了什么”，不等于情绪归属已经确定。
 
-### 3.2 emotion_appraisal：一次事件的一个情绪判断
+### 3.2 emotion_appraisal：一次事件的一次评估修订（多情绪项目）
 
 新增：
 - `experiencer_type TEXT NOT NULL DEFAULT 'unknown'`
-- `experiencer_id TEXT NOT NULL DEFAULT ''`
-- `target_type TEXT NOT NULL DEFAULT 'unknown'`
-- `target_id TEXT NOT NULL DEFAULT ''`
-- `evidence_json TEXT NOT NULL DEFAULT '{}'`
+- `experiencer_id TEXT NOT NULL DEFAULT ''`（裸 ID）
+- `appraisal_version INTEGER NOT NULL DEFAULT 1`
+- `supersedes_appraisal_id INTEGER`（被本次修订取代的上一 appraisal）
+- `evidence_json TEXT NOT NULL DEFAULT '{}'`（评估级公共证据元数据）
 
-一条事件允许产生多条 appraisal；每条 appraisal 表达一个情绪维度/标签，不做正负抵消。保留 `accepted`，但新接口应区分 accepted、rejected、needs_review，旧 integer 列仍兼容（具体映射在迁移实现前由测试锁定）。
+**统一模型裁决：采用“一条 appraisal + 多条 appraisal_items”**，不再并存“一情绪一条 appraisal”的第二种新模型。新增 `emotion_appraisal_items` 子表，每行代表一个情绪维度，字段至少包括 `appraisal_id, item_index, emotion, intensity, confidence, target_type, target_id, evidence_json`，并以 `(appraisal_id,item_index)` 唯一。正负情绪可同时存在，不做净额抵消。
+
+为兼容旧表，`emotion_appraisal` 原有 `emotion/intensity/target/confidence` 列暂时保留；旧接口继续读取。新接口以 items 为权威；旧列只作为单项目兼容镜像（多项目时镜像规则须在 EI-2A 测试锁定，不允许旧列反向覆盖 items）。同一 event 的重评通过 `appraisal_version` 递增和 `supersedes_appraisal_id` 形成链；同一事件同一版本唯一。保留 `accepted`，新接口区分 accepted、rejected、needs_review，旧 integer 列仍兼容。
 
 `evidence_json` 仅保存可追溯的规则/观察字段和来源引用，不保存私有思维链；原始消息正文仍按既有 provenance 策略管理。
 
@@ -111,6 +115,8 @@ EI-1 输出保留 `sourceIds` 仅作兼容字段；新契约使用 `sourceRefs: 
 
 ## 4. Active Emotion Projection（运行时投影）
 
+`primary` 只代表跨体验者的通用上下文排序结果，不是汐自身状态。EI-1/EI-2 新消费者必须使用 `selfEmotions` / `primaryForSelf`（只含 `experiencer_type=self` 且达到门槛的项）；owner、third_party、unknown 只作为理解上下文，绝不能进入汐的 self state 或语气注入。
+
 不将衰减后的值覆盖回 episode。每次读取按固定 `now` 对未结束且未过期 episode 计算投影：
 
 `decayedIntensity = intensity * 0.5 ^ (max(0, now - at) / (half_life_s * 1000))`
@@ -134,18 +140,24 @@ EI-1 输出保留 `sourceIds` 仅作兼容字段；新契约使用 `sourceRefs: 
 ### Persona outbox（新增）
 
 `emotion_outbox`：
-- `event_id TEXT PRIMARY KEY`（UUID）
+- `event_id TEXT PRIMARY KEY`（UUID；与 `emotion_event.id` 的整数主键完全分离）
+- `idem_key TEXT NOT NULL UNIQUE`（按 episode_id + event_type + episode_revision 确定；重试必须复用同一 event_id/idem_key）
 - `contract_version INTEGER NOT NULL`
 - `event_type TEXT NOT NULL`（emotion.episode.created / updated / ended）
 - `payload_json TEXT NOT NULL`
 - `created_at INTEGER NOT NULL`
-- `delivered_at INTEGER`
+- `delivered_at INTEGER`（仅收到 Memory 对应 event_id 的成功 ack 后填写）
 - `attempts INTEGER NOT NULL DEFAULT 0`
+- `next_retry_at INTEGER`
 - `last_error TEXT NOT NULL DEFAULT ''`
+- `ack_status TEXT NOT NULL DEFAULT 'pending'`（pending/sent/acked/rejected）
+- `acked_at INTEGER`
 
 episode 与 outbox 必须在同一 persona DB 事务中写入。发送失败不回滚已保存的 episode；outbox 保留待重试。
 
 ### Memory inbox（memory-core 侧新增，需独立仓库设计）
+
+Memory 处理成功后必须返回带同一 `event_id`、`contract_version` 和 `payload_sha256` 的 ack；Persona 只有校验 ack 与原 payload 匹配后才将 outbox 标记 acked。传输发送成功不等于业务处理成功。
 
 `persona_emotion_inbox`：
 - `event_id TEXT PRIMARY KEY`
@@ -187,7 +199,7 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
 
 1. 目标版本暂定 schema v3；实施前必须核对当前 meta 标记与真实结构，不能只看常量。
 2. 迁移必须幂等、只增不删、可重复执行；先在临时副本验证 v1/v2/“meta 标记与表结构不一致”三种输入。
-3. 老 `emotion_episodes` 统一新增 experiencer=unknown；只有逐条可追溯证据明确证明属于 self/owner 时，才允许后续独立回填，不能批量猜测。
+3. 老 `emotion_episodes` / `emotion_appraisal` 统一新增 experiencer=unknown。旧数据核验矩阵：①明确带结构化 experiencer_type/id 的行→按结构化值；②有逐条事件链、且能证明由汐的主观体验模块创建的行→可列为 known-self 候选，先 shadow-only；③只有 `self_id`、actor/subject/target 自由文本或“记录位于 persona.db”→仍为 unknown；④明确来自主人/第三方输入且可追溯→owner/third_party 候选，仍须 shadow 核验。当前报告提及的 348 条旧 appraisal/episode 不得批量转 self；先统计 unknown/known-self/owner 候选分布，接受 unknown 旧记录暂不参与 self 注入。
 4. 老 target 字段不丢弃；无法映射命名空间的目标标记 unknown。
 5. 旧服务 `emotion.state()`、`emotionAt()`、`emotionTimeline()`、旧工具 JSON 形状继续工作；新组合 API 以新增方法暴露，不破坏旧消费者。
 6. 新投影先 shadow-only：计算并记录脱敏统计，不改变现有注入；与旧 emotion line 对比后再决定是否接管。
@@ -197,6 +209,12 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
 ## 7. 必须覆盖的测试
 
 - 体验者 self/owner/third_party/unknown 分离；缺字段永远不会默认为 self。
+- `experiencer_id` 裸 ID、已带匹配前缀、前缀冲突、unknown+非空 ID、旧式 `experiencer='self:<id>'`。
+- 同一 episode 同时含 `id/episodeId/episode_id` 与 `appraisalId/appraisal_id` 时 sourceRefs 全保留且去重。
+- unknown-only 输入 `primaryForSelf=null`；owner/third_party 不进入 selfEmotions；只有 self 且置信度过门槛才 injectable。
+- event dedupe_key 唯一；同 event 多 appraisal items；appraisal version/supersedes 链。
+- target_type=tool 迁移与旧查询兼容。
+- 旧数据迁移矩阵：unknown/known-self/owner/third_party shadow 分类及统计。
 - 同一 target 上正负情绪并存；不同 target 不合并。
 - episode 衰减只影响 projection，不修改源对象或 DB 原值。
 - expires_at 到期、ended_at 显式结束、重复 end、乱序事件。
@@ -225,6 +243,7 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
 5. Memory 侧是否仅做关联检索，或允许情绪影响回忆排序；本提案默认只做关联，不改变事实权重、召回排序和自动注入。
 6. outbox 重试/保留期与事件纠错/撤回语义。
 7. 是否需要保留 legacy confidence threshold 0.65；它是工程影子评估阈值，不是心理学真值。
+8. `stateFor(target)`：新 API 按 target 命名空间从 episodes 计算只读投影，不新增按 target 持久化的“当前情绪真相”表；`stateFor('self')` 可在无新模型 self 投影时返回显式标记 `legacyFallback:true` 的旧 `emotion_state` 兼容视图，但 owner/third_party/tool 不得复用该单行状态。该 fallback 仅供旧 UI/兼容读取，不得自动升级为可信 self 注入。
 
 ## 10. 安全边界与本次状态
 
@@ -254,3 +273,27 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
 - 对 timeline 写入使用真实 `self_id` schema 做端到端断言；
 - confidence 缺失、明确低置信、规则默认置信三种情形在 API 和 DB 中可区分；
 - expiry 与 intensity decay 分别测试，且都不物理删除源 episode。
+
+## 12. GPT 复核修订（2026-11-21；未冻结）
+
+本节是 EI-2A 的设计修订基线，不代表项目负责人已批准 schema v3、迁移或生产切换。
+
+### 12.1 已裁决的模型口径
+- `experiencer_id` 使用裸 ID；type 与 ID 分列。输入层可剥离匹配的旧前缀，unknown 的 ID 必须为空。
+- 多情绪采用一个 appraisal 修订记录 + `emotion_appraisal_items` 多项目子表；不再保留两套并行建模方式。
+- appraisal 修订用 `appraisal_version` + `supersedes_appraisal_id` 表达；旧 appraisal 保留，不覆盖历史判断。
+- `target_type` 保留 `tool` 独立类型，避免把工具对象的情绪指向丢失。
+- event 幂等键纳入 `(self_id, experiencer_type, experiencer_id, source_kind, dedupe_key)` 唯一口径。
+- `stateFor(target)` 默认是从 episode 计算的只读投影；旧单行 `emotion_state` 只允许 self 兼容 fallback，不作为多 target 的持久化真相。
+- 通用 `primary` 不等于 self primary；self 注入只读 `primaryForSelf` / `selfEmotions`。
+
+### 12.2 尚未冻结的接口与实施问题
+1. owner 稳定 ID、third_party 跨会话 ID 的最终来源仍需项目负责人裁决。
+2. `emotion_appraisal` 旧列在多 item 情形下的兼容镜像策略，需在 EI-2A fixture 测试中定案。
+3. `emotion_episode_sources` 的 source type 白名单与 legacy 前缀映射仍需定案；不得把任意 `x:y` 直接当作可信来源类型。
+4. Memory inbox/outbox 的具体 ACK 传输方式属于跨仓库接口，必须由 Memory 专项独立审查；EI 智能体不得修改 Memory 仓库。
+5. 旧 348 条 appraisal/episode 的归属只允许 shadow 分类；不能因旧代码路径或 self_id 字段直接批量认定为 self。
+6. `emotion_timeline` 旧路径 schema 不匹配与吞错问题是独立兼容缺陷，EI-2A 必须有真实 schema fixture；不得用新表迁移掩盖。
+
+### 12.3 实施门禁
+EI-1 修复分支必须先通过定向与全量测试，并完成 DSHA 隔离复验，方可将 EI-1 标记 PASS。EI-2A 仅可在本提案再次评审并由负责人明确授权后开始；生产 DB、生产注入、staging、部署和重启仍需单独授权。
