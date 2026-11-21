@@ -107,7 +107,7 @@ episode 表示持续体验，不是当前心情快照。自然到期只使其退
 新增关联表：
 - `id INTEGER PRIMARY KEY`
 - `episode_id INTEGER NOT NULL`
-- `source_type TEXT NOT NULL`（规范白名单：`event | appraisal | episode | raw_message | tool_call | memory | external | legacy`。EI-1 归一化：`raw → raw_message`；`episode` 保持 `episode`；`legacy` 仅作为不可解析的兼容来源保留，禁止据此授权或跨表 join；未知 type 拒绝入库，不得把任意 `x:y` 前缀自动信任为类型）。
+- `source_type TEXT NOT NULL`（规范白名单：`event | appraisal | episode | raw_message | tool_call | memory | external | legacy`。规范映射为 `raw → raw_message`、`episode → episode`；`legacy` 仅作为不可解析的兼容来源保留，禁止据此授权或跨表 join；未知 type 拒绝入库，不得把任意 `x:y` 前缀自动信任为类型。**注意：当前 EI-1 `sourceRefs` 兼容输出仍保留 `raw`（现有测试也断言 `raw`），并未在该层归一化为 `raw_message`；EI-2A 必须在明确的持久化边界适配并用 fixture 证明映射，不得把设计映射误写成 EI-1 已实现行为。**）
 - `source_id TEXT NOT NULL`
 - `role TEXT NOT NULL DEFAULT 'evidence'`（evidence、trigger、context、corroboration）
 - `created_at INTEGER NOT NULL`
@@ -296,7 +296,7 @@ DDL 验收还必须断言：`UNIQUE(event_id, appraisal_version)` 能拒绝同�
 ### 12.2 尚未冻结的接口与实施问题
 1. owner 稳定 ID、third_party 跨会话 ID 的最终来源仍需项目负责人裁决。
 2. `emotion_appraisal` 旧列在多 item 情形下的兼容镜像策略，需在 EI-2A fixture 测试中定案。
-3. `emotion_episode_sources` 的 source type 白名单与 legacy 前缀映射已定稿：`event | appraisal | episode | raw_message | tool_call | memory | external | legacy`，`raw → raw_message`；未知 type 拒绝，`legacy` 不可用于授权或跨表 join。剩余待办仅为 EI-2A fixture 验证。
+3. `emotion_episode_sources` 的规范 source type 白名单与映射规则已定稿：`event | appraisal | episode | raw_message | tool_call | memory | external | legacy`，其中 `raw → raw_message`；未知 type 拒绝，`legacy` 不可用于授权或跨表 join。当前 EI-1 `sourceRefs` 仍输出 `raw`，因此 EI-2A 必须在持久化边界显式归一化，并通过 fixture 验证；不能声称 EI-1 已完成该映射。
 4. Memory inbox/outbox 的具体 ACK 传输方式属于跨仓库接口，必须由 Memory 专项独立审查；EI 智能体不得修改 Memory 仓库。
 5. 旧 348 条 appraisal/episode 的归属只允许 shadow 分类；不能因旧代码路径或 self_id 字段直接批量认定为 self。
 6. `emotion_timeline` 旧路径 schema 不匹配与吞错问题是独立兼容缺陷，EI-2A 必须有真实 schema fixture；不得用新表迁移掩盖。
