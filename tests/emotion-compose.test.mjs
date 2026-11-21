@@ -17,6 +17,14 @@ test('confidence classification preserves unknown rather than inventing certaint
   assert.equal(classifyEmotionConfidence(0.2), 'uncertain')
 })
 
+test('missing experiencer is unknown and never silently becomes self', () => {
+  const result = composeEmotionEpisodes([
+    ep({ experiencer: undefined, experiencerType: undefined, experiencer_type: undefined }),
+  ], { now: NOW })
+  assert.equal(result.allEmotions[0].experiencer, 'unknown')
+  assert.equal(result.allEmotions[0].experiencerType, 'unknown')
+})
+
 test('same emotion and target merges by maximum decayed intensity, never sum', () => {
   const result = composeEmotionEpisodes([
     ep({ id: 1, intensity: 0.7 }),
@@ -90,6 +98,22 @@ test('preserves both episode and appraisal identifiers plus explicit sourceIds',
     ep({ id: 12, appraisal_id: 88, appraisalId: 89, episodeId: 13, sourceIds: ['raw:4', 'event:5'] }),
   ], { now: NOW })
   assert.deepEqual(result.allEmotions[0].sourceIds, [12, 13, 88, 89, 'event:5', 'raw:4'])
+  assert.deepEqual(result.allEmotions[0].sourceRefs, [
+    { type: 'appraisal', id: '88', role: 'evidence' },
+    { type: 'appraisal', id: '89', role: 'evidence' },
+    { type: 'episode', id: '12', role: 'evidence' },
+    { type: 'episode', id: '13', role: 'evidence' },
+    { type: 'event', id: '5', role: 'evidence' },
+    { type: 'raw', id: '4', role: 'evidence' },
+  ])
+})
+
+test('typed source refs keep equal numeric IDs from different tables distinct', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 7, appraisal_id: 7, sourceIds: ['event:7'] }),
+  ], { now: NOW })
+  assert.deepEqual(result.allEmotions[0].sourceRefs.map((x) => x.type), ['appraisal', 'episode', 'event'])
+  assert.equal(result.allEmotions[0].sourceRefs.length, 3)
 })
 
 test('rejects malformed episodes, non-finite expiry, and out-of-range intensity', () => {
