@@ -59,7 +59,7 @@
 
 保留现有字段，新增：
 - `dedupe_key TEXT NOT NULL`：同一来源事件的稳定幂等键；写入前必须规范化且非空。
-- 唯一约束 `(self_id, actor_type, actor_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径；旧行用确定性 legacy key 回填。
+- 唯一约束 `(self_id, experiencer_type, experiencer_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径；旧行用确定性 legacy key 回填。
 - `actor_type TEXT NOT NULL DEFAULT 'unknown'`
 - `actor_id TEXT NOT NULL DEFAULT ''`
 - `occurred_at INTEGER`（原始发生时间；旧行可回填 `at`）
