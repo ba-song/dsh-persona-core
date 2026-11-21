@@ -25,6 +25,47 @@ test('missing experiencer is unknown and never silently becomes self', () => {
   assert.equal(result.allEmotions[0].experiencerType, 'unknown')
 })
 
+test('experiencer IDs use bare-ID contract and matching prefixes are not doubled', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 10, experiencerType: 'owner', experiencerId: '123' }),
+    ep({ id: 11, experiencerType: 'owner', experiencerId: 'owner:456', emotion: 'sadness' }),
+  ], { now: NOW })
+  assert.deepEqual(result.allEmotions.map((x) => x.experiencer).sort(), ['owner:123', 'owner:456'])
+})
+
+test('unknown experiencer always has an empty ID', () => {
+  const result = composeEmotionEpisodes([
+    ep({ experiencerType: 'unknown', experiencerId: 'x' }),
+  ], { now: NOW })
+  assert.equal(result.total, 1)
+  assert.equal(result.allEmotions[0].experiencer, 'unknown')
+  assert.equal(result.allEmotions[0].experiencerId, '')
+  assert.equal(result.allEmotions[0].injectable, false)
+  assert.equal(result.primaryForSelf, null)
+})
+
+test('legacy namespaced experiencer is parsed without treating it as a type', () => {
+  const result = composeEmotionEpisodes([
+    ep({ experiencer: 'self:1d2', experiencerType: undefined, experiencer_type: undefined }),
+  ], { now: NOW })
+  assert.equal(result.allEmotions[0].experiencerType, 'self')
+  assert.equal(result.allEmotions[0].experiencerId, '1d2')
+  assert.equal(result.allEmotions[0].experiencer, 'self:1d2')
+})
+
+test('only self-attributed emotions enter the self projection', () => {
+  const result = composeEmotionEpisodes([
+    ep({ id: 1, experiencerType: 'unknown', experiencerId: 'x' }),
+    ep({ id: 2, experiencerType: 'owner', experiencerId: 'owner-1', emotion: 'sadness' }),
+    ep({ id: 3, experiencerType: 'third_party', experiencerId: 'person-2', emotion: 'fear' }),
+    ep({ id: 4, experiencerType: 'self', experiencerId: 'self-1', emotion: 'anger' }),
+  ], { now: NOW })
+  assert.deepEqual(result.selfEmotions.map((x) => x.experiencerType), ['self'])
+  assert.equal(result.primaryForSelf?.experiencerType, 'self')
+  assert.equal(result.selfEmotions[0].injectable, true)
+  assert.equal(result.allEmotions.filter((x) => x.experiencerType !== 'self').every((x) => !x.injectable), true)
+})
+
 test('same emotion and target merges by maximum decayed intensity, never sum', () => {
   const result = composeEmotionEpisodes([
     ep({ id: 1, intensity: 0.7 }),
@@ -95,14 +136,15 @@ test('invalid arguments fail loudly rather than silently truncating', () => {
 
 test('preserves both episode and appraisal identifiers plus explicit sourceIds', () => {
   const result = composeEmotionEpisodes([
-    ep({ id: 12, appraisal_id: 88, appraisalId: 89, episodeId: 13, sourceIds: ['raw:4', 'event:5'] }),
+    ep({ id: 12, appraisal_id: 88, appraisalId: 89, episodeId: 13, episode_id: 14, sourceIds: ['raw:4', 'event:5'] }),
   ], { now: NOW })
-  assert.deepEqual(result.allEmotions[0].sourceIds, [12, 13, 88, 89, 'event:5', 'raw:4'])
+  assert.deepEqual(result.allEmotions[0].sourceIds, [12, 13, 14, 88, 89, 'event:5', 'raw:4'])
   assert.deepEqual(result.allEmotions[0].sourceRefs, [
     { type: 'appraisal', id: '88', role: 'evidence' },
     { type: 'appraisal', id: '89', role: 'evidence' },
     { type: 'episode', id: '12', role: 'evidence' },
     { type: 'episode', id: '13', role: 'evidence' },
+    { type: 'episode', id: '14', role: 'evidence' },
     { type: 'event', id: '5', role: 'evidence' },
     { type: 'raw', id: '4', role: 'evidence' },
   ])
