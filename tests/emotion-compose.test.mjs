@@ -23,6 +23,7 @@ test('missing experiencer is unknown and never silently becomes self', () => {
   ], { now: NOW })
   assert.equal(result.allEmotions[0].experiencer, 'unknown')
   assert.equal(result.allEmotions[0].experiencerType, 'unknown')
+  assert.equal(result.primaryForSelf, null)
 })
 
 test('experiencer IDs use bare-ID contract and matching prefixes are not doubled', () => {
@@ -31,6 +32,13 @@ test('experiencer IDs use bare-ID contract and matching prefixes are not doubled
     ep({ id: 11, experiencerType: 'owner', experiencerId: 'owner:456', emotion: 'sadness' }),
   ], { now: NOW })
   assert.deepEqual(result.allEmotions.map((x) => x.experiencer).sort(), ['owner:123', 'owner:456'])
+})
+
+test('a mismatched experiencer ID namespace is rejected', () => {
+  const result = composeEmotionEpisodes([
+    ep({ experiencerType: 'owner', experiencerId: 'self:123' }),
+  ], { now: NOW })
+  assert.equal(result.total, 0)
 })
 
 test('unknown experiencer always has an empty ID', () => {
