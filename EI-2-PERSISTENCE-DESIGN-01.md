@@ -1,7 +1,7 @@
 # EI-2 持久化与跨模块关联设计（提案 01）
 
 > 仓库：`ba-song/dsh-persona-core`  
-> 设计基线：`main` = `a84c7badd1e6c971a66b6c39dd4f7ab795df4b90`；本提案最初基于 `950eb423`，修复分支当前已验收 HEAD 为 `3a1376184491d94b02d4c3ad4990a957e85acb48`（相对 main ahead 22 commits；后续以 GitHub compare 实时结果为准）。  
+> 设计基线：`main` = `a84c7badd1e6c971a66b6c39dd4f7ab795df4b90`；本提案最初基于 `950eb423`，EI-1 代码隔离验收目标 commit 为 `3a1376184491d94b02d4c3ad4990a957e85acb48`；本设计文档随后有独立文档修订提交，分支 HEAD 以 GitHub compare 实时结果为准。  
 > 性质：**设计提案，不是已批准迁移，也不是生产实施授权。** 本文只定义兼容式演进方案；不改生产 DB、不部署、不重启、不改变真实情绪状态。
 
 ## 0. 设计目标
@@ -16,7 +16,7 @@
 2. 现有 `emotion_event` 有 `self_id, actor, subject, target, source_ref, payload_json, confidence` 等字段；`self_id` 是 persona 主体键，不等于情绪体验者。
 3. 现有 `emotion_appraisal` 通过 `event_id` 关联事件，有 `emotion/intensity/target/confidence/accepted/source` 等字段，但没有显式 experiencer 命名空间。
 4. 现有 `emotion_episodes` 有 `self_id, at, emotion, intensity, cause, target, half_life_s, expires_at, appraisal_id, msg_ref`，缺少 experiencer、目标类型、独立来源集合和结束原因。
-5. EI-1 的 `lib/emotion-compose.js` 是纯函数投影层，尚未接入 DB、appraisal、注入或 memory。修复分支 `fix/ei1-source-ref-experiencer-contract` 已收口 experiencer 与 typed `sourceRefs` 契约；`b1cac0f` 曾因 `sourceIds` 兼容字段缺少 `episode_id` 验收失败；后续提交 `b8d598e89816bd1efeb49ad44190e7f0c7900e60` 已补入该别名。当前修复分支 HEAD 为 `3a1376184491d94b02d4c3ad4990a957e85acb48`；EI-1 定向测试 21/21、全量测试 324/324，均 0 fail、0 skip，代码隔离验收 PASS。该结果不代表 DSHA/负责人设备复验或生产集成通过。
+5. EI-1 的 `lib/emotion-compose.js` 是纯函数投影层，尚未接入 DB、appraisal、注入或 memory。修复分支 `fix/ei1-source-ref-experiencer-contract` 已收口 experiencer 与 typed `sourceRefs` 契约；`b1cac0f` 曾因 `sourceIds` 兼容字段缺少 `episode_id` 验收失败；后续提交 `b8d598e89816bd1efeb49ad44190e7f0c7900e60` 已补入该别名。EI-1 代码验收目标 commit 为 `3a1376184491d94b02d4c3ad4990a957e85acb48`；EI-1 定向测试 21/21、全量测试 324/324，均 0 fail、0 skip，代码隔离验收 PASS。该结果不代表 DSHA/负责人设备复验或生产集成通过。
 6. 旧 emotion_state / timeline / points 与新 event/appraisal/episode 并存，必须保持既有 API 和旧表可用，不能一次性替换旧状态模型。
 
 ## 2. 核心语义：身份与对象必须分开
