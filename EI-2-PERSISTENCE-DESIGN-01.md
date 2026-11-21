@@ -233,3 +233,24 @@ Memory 侧只存情绪关联和可检索的结构化摘要，不把情绪作为�
 - 不向 Memory 发送真实情绪数据；outbox/inbox 仅为设计。
 - 不把 unknown 自动转换为 self。
 - 不将情绪作为记忆事实、授权或行动决策的替代依据。
+
+
+## 11. 进一步核对现有写入路径后的风险（必须进入 EI-2A 验收）
+
+对 `main` 的 `lib/emotion.js` 与 `lib/db.js` 复核后，补充以下已见代码事实：
+
+1. `recordRuleEpisode()` 依次调用 `recordEvent()`、`recordAppraisal()`、`recordEpisode()`，这三个 INSERT 之间没有由该函数统一开启的事务。中途失败可能留下只有 event 或 event+appraisal 的半成品链。EI-2B 必须将三者置于同一个事务边界；不能只在外层调用者“通常会事务化”作为保证。
+2. `recordRuleEpisode()` 默认把 confidence 传为 0.7，但独立调用 `recordAppraisal()` 默认 confidence=0.5；不同入口会产生不一致的置信度默认值。新 API 必须明确“缺失=unknown/NULL”还是“规则默认值”，禁止悄悄混用。旧列 NOT NULL 暂时不能直接改，需新增 nullable 语义字段或通过显式状态区分 unknown。
+3. `applyCoreAppraisal()` 尝试向 `emotion_timeline(session_key,...)` 插入，但当前 v2 建表字段为 `self_id`，异常又被空 catch 吞掉。该路径可能长期没有 timeline 记录。它是旧路径兼容修复项，不能让 EI-2 新表迁移把它掩盖；修复需单独测试真实 schema 列名及 timeline 读写。
+4. `recordRuleEpisode()` 中对 state、core、relationship 的写入分别使用 catch 吞错。事件/评估/episode 主链、旧状态投影、关系轴属于不同失败域；EI-2 应先保证主链原子性，再将非关键投影放在提交后可重试的 outbox/派生任务中，且必须可观察失败，不能继续静默吞掉。
+5. `emotion_event.actor/subject/target` 与 `emotion_appraisal.target` 都是自由文本；现有代码没有足够契约证明 actor 等于 experiencer，也没有统一 target namespace。不得在迁移时用文本猜测身份归属；未被逐条可靠证据证明的旧 episode/appraisal 一律 unknown。
+6. 当前 `lib/db.js` 的常量 `SCHEMA_VERSION=2`，但表结构在多个历史变更中已扩展（如 appraisal attunement 字段、relationship_axes）。新迁移不能只凭 version number 推断结构。必须以 sqlite_master + PRAGMA table_info 的真实结构探测为准，版本标记只作为辅助元数据；对 meta=2 但已存在部分新表/列的库要有单独 fixture。
+7. 当前 `emotion_episodes` 的 `expires_at` 由 `at + halfLifeS * 2` 生成，而投影公式又按 half-life 衰减。EI-2 必须区分“生命周期硬截止”和“衰减后低于 active floor”，两者都只影响投影，不删除 episode；不要把 expires_at 当作半衰期本身。
+
+对应的新增验收：
+- 在 event 写入后、appraisal 写入后分别注入故障，确认事务回滚后不存在半条链；
+- state/timeline/relationship 派生写入失败时，主链结果和可重试任务状态明确，不能静默丢失；
+- schema_version=2 且真实结构分别为旧结构、部分扩展结构、完整当前结构的三类 fixture 均可安全识别；
+- 对 timeline 写入使用真实 `self_id` schema 做端到端断言；
+- confidence 缺失、明确低置信、规则默认置信三种情形在 API 和 DB 中可区分；
+- expiry 与 intensity decay 分别测试，且都不物理删除源 episode。
