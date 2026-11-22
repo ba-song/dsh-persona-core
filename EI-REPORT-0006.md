@@ -1,7 +1,7 @@
 # EI-REPORT-0006 · 人格与情绪主线复核（PERSONA-EI-CURRENT-STATE-READONLY-01）
 
 > 仓库：`ba-song/dsh-persona-core`
-> 分支：`ei/pre-ei2a-review-01-recheck`（基于 `4992a31`，仅新增本报告）
+> 分支：`ei/pre-ei2a-review-01`（基于 `4992a31`，仅新增本报告）
 > 任务：`PERSONA-EI-CURRENT-STATE-READONLY-01`
 > 生成时间：2026-11-22 09:30 (Asia/Shanghai)
 > 性质：只读审查、隔离测试与报告；不授权 EI-2A、schema 修改、生产迁移、注入切换、部署或重启。
@@ -42,7 +42,7 @@
 | main | `a84c7badd1e6c971a66b6c39dd4f7ab795df4b90`（未变） |
 | EI-1 修复分支 | `fix/ei1-source-ref-experiencer-contract` @ **`8ccb8a922a789d8d15157b9d99f9de0c20c8807b`** |
 | EI 报告分支 | `ei/pre-ei2a-review-01` @ **`4992a313f72326caa4b5e84558005a53db239af0`** |
-| 本报告分支 | `ei/pre-ei2a-review-01-recheck`（基于 `4992a31`） |
+| 本报告分支 | `ei/pre-ei2a-review-01`（基于 `4992a31`） |
 | main..fix | 26 commits |
 | main..report | 27 commits |
 | fix..report | 2 commits（报告 0005 侧） |
@@ -295,4 +295,4 @@ DSHA/设备复验 **NOT RUN**；生产集成 **NOT RUN**。
 - 只读审查与隔离测试：临时 worktree、临时 SQLite、合成 fixture；未读取生产情绪正文，未写生产 DB。
 - 未修改 EI-1 源码/测试/EI-2 设计文档；未修改 Memory 仓库或共享 HANDOFF/REPORT。
 - 未执行 schema migration、部署、重启、staging；未合并 main；未接生产注入；未启动 EI-2A。
-- 仅新增本报告文件于 `ei/pre-ei2a-review-01-recheck` 分支。
+- 仅新增本报告文件于 `ei/pre-ei2a-review-01` 分支。
