@@ -1,7 +1,7 @@
 # EI-REPORT-0007 · Memory×Persona 集成契约专项评审
 
 > 仓库：`ba-song/dsh-persona-core`
-> 分支：`ei/contract-review-01`（基于 `e6068c2`，仅新增本报告）
+> 分支：`ei/pre-ei2a-review-01`（基于 `e6068c2`，仅新增本报告）
 > 任务：`MEMORY-PERSONA-INTEGRATION-CONTRACT-01`
 > 生成时间：2026-11-22 10:00 (Asia/Shanghai)
 > 性质：只读评审、隔离复现与报告；不授权 EI-2A、schema 迁移、生产写入、部署或重启。
