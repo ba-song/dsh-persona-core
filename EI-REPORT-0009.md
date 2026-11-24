@@ -183,3 +183,13 @@ Memory M1 `lib/service.js`：
 8. Memory addEpisode 拒绝 self:unknown/非法，新增 `E_PERSONA_IDENTITY_UNKNOWN`；契约测试矩阵。
 9. D1 owner ID、owner episode BLOCKED 策略、Memory v6 接口冻结。
 10. 报告/设计分支同步；所有测试在准确 HEAD/临时 DB 复跑。
+
+
+## 14. 设计基线同步（2026-11-24）
+
+- 设计文件：`EI-2-PERSISTENCE-DESIGN-01.md`
+- 已将本分支旧 blob `d79bd124167dec45968fc5aece7060017fc75057` 同步为修订分支 `fix/ei1-source-ref-experiencer-contract` 的权威 blob `670e5a34a1916a8b104ebfd1004b525236677d4c`。
+- 同步提交：`5fc6d70a5565d41a842609a406ca1c8345d4d87d`。
+- 本次只同步设计文本，不修改 EI 代码、schema、迁移或运行配置。
+- 本报告 §1–§13 的代码审查对象与测试结论仍绑定其原记录的 EI-1 HEAD `8ccb8a922a789d8d15157b9d99f9de0c20c8807b`；本次同步不代表重新运行测试，也不将设计提案转为实施授权。
+- EI-2A 仍为 NOT RUN / 未获 Owner 授权；任何 schema/migration、持久化行为或设备配置变更继续暂停。
