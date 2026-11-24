@@ -60,7 +60,7 @@
 保留现有字段，新增：
 - `experiencer_type TEXT NOT NULL DEFAULT 'unknown'` 与 `experiencer_id TEXT NOT NULL DEFAULT ''`：事件归属的情绪体验者，和 actor/subject 分开。
 - `dedupe_key TEXT NOT NULL`：同一来源事件的稳定幂等键；写入前必须规范化且非空。
-- 唯一约束 `UNIQUE(self_id, experiencer_type, experiencer_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径；旧行用确定性 legacy key 回填。迁移前先规范化空白与大小写规则；不得把随机值作为重试时变化的 dedupe_key。
+- 唯一约束 `UNIQUE(self_id, experiencer_type, experiencer_id, source_kind, dedupe_key)`，对应 EI-0 的 experiencer/source_kind/dedupe_key 去重口径。旧行确定性回填公式冻结为 `legacy:event:<event_id>`（`event_id` 使用 `emotion_event.id` 的十进制文本）；旧行 `source_kind` 缺失时补 `legacy`，已有非空值保留。迁移 fixture 必须验证无冲突、重复执行幂等、已有非空 dedupe_key 不被覆盖。新写入仅 trim 外围空白并做 Unicode NFC 规范化，保留大小写（opaque ID 可能区分大小写），空值拒绝；重试必须复用同一键，禁止随机键。
 - `actor_type TEXT NOT NULL DEFAULT 'unknown'`
 - `actor_id TEXT NOT NULL DEFAULT ''`
 - `occurred_at INTEGER`（原始发生时间；旧行可回填 `at`）
@@ -77,10 +77,12 @@
 - `appraisal_version INTEGER NOT NULL DEFAULT 1`
 - `supersedes_appraisal_id INTEGER`（被本次修订取代的上一 appraisal）
 - `evidence_json TEXT NOT NULL DEFAULT '{}'`（评估级公共证据元数据）
+- `confidence_kind TEXT NOT NULL DEFAULT 'legacy_unclassified'`：`unknown | rule_default | calibrated | legacy_unclassified`。
+- `confidence_source TEXT NOT NULL DEFAULT 'legacy_migration'`：来源标识；规则默认值记录具体入口/规则（例如 `recordRuleEpisode`、`recordAppraisal` 或 `rule:<rule_id>`），校准值记录模型及版本；unknown 使用 `unknown`。
 
-**统一模型裁决：采用“一条 appraisal + 多条 appraisal_items”**，不再并存“一情绪一条 appraisal”的第二种新模型。新增 `emotion_appraisal_items` 子表，每行代表一个情绪维度，字段至少包括 `appraisal_id, item_index, emotion, intensity, confidence, target_type, target_id, evidence_json`，并以 `(appraisal_id,item_index)` 唯一。正负情绪可同时存在，不做净额抵消。
+**统一模型裁决：采用“一条 appraisal + 多条 appraisal_items”**，不再并存“一情绪一条 appraisal”的第二种新模型。新增 `emotion_appraisal_items` 子表，每行代表一个情绪维度，字段至少包括 `appraisal_id, item_index, emotion, intensity, confidence, confidence_kind, confidence_source, target_type, target_id, evidence_json`，并以 `(appraisal_id,item_index)` 唯一。items 的 `confidence` 允许 NULL；`confidence_kind`/`confidence_source` 使用与 appraisal 相同语义。正负情绪可同时存在，不做净额抵消。
 
-为兼容旧表，`emotion_appraisal` 原有 `emotion/intensity/target/confidence` 列暂时保留；旧接口继续读取。新接口以 items 为权威；旧列只作为单项目兼容镜像（多项目时镜像规则须在 EI-2A 测试锁定，不允许旧列反向覆盖 items）。同一 event 的重评通过 `appraisal_version` 递增和 `supersedes_appraisal_id` 形成链；同一事件同一版本唯一，必须建立 `CREATE UNIQUE INDEX IF NOT EXISTS uq_emotion_appraisal_event_version ON emotion_appraisal(event_id, appraisal_version)`；EI-2A 需先证明 `event_id` 对新写入 NOT NULL。旧 NULL 行不参与新写入唯一性语义，必须在迁移报告中单独统计，不得把 SQLite 对 NULL 的 UNIQUE 行为误当成幂等保障。保留 `accepted`，新接口区分 accepted、rejected、needs_review，旧 integer 列仍兼容。
+为兼容旧表，`emotion_appraisal` 原有 `emotion/intensity/target/confidence` 列暂时保留；旧接口继续读取。原有 `confidence` 列的 NOT NULL/默认约束不在本次增量迁移中重建；新消费者必须先检查 `confidence_kind`，不得把 `legacy_unclassified` 或 `unknown` 行上的兼容数值当成已知置信度。新写入缺少置信度时语义字段必须标 `unknown`；items 写 NULL，旧 appraisal 列如受 NOT NULL 限制可保留兼容占位值，但必须由 `confidence_kind='unknown'` 明确屏蔽。新接口以 items 为权威；旧列只作为单项目兼容镜像（多项目时镜像规则须在 EI-2A 测试锁定，不允许旧列反向覆盖 items）。同一 event 的重评通过 `appraisal_version` 递增和 `supersedes_appraisal_id` 形成链；同一事件同一版本唯一，必须建立 `CREATE UNIQUE INDEX IF NOT EXISTS uq_emotion_appraisal_event_version ON emotion_appraisal(event_id, appraisal_version)`；EI-2A 需先证明 `event_id` 对新写入 NOT NULL。旧 NULL 行不参与新写入唯一性语义，必须在迁移报告中单独统计，不得把 SQLite 对 NULL 的 UNIQUE 行为误当成幂等保障。保留 `accepted`，新接口区分 accepted、rejected、needs_review，旧 integer 列仍兼容。
 
 `evidence_json` 仅保存可追溯的规则/观察字段和来源引用，不保存私有思维链；原始消息正文仍按既有 provenance 策略管理。
 
@@ -96,7 +98,7 @@
 - `end_reason TEXT NOT NULL DEFAULT ''`
 - `episode_revision INTEGER NOT NULL DEFAULT 1`（每次可发布更新递增；outbox idem_key 使用该 revision）
 
-生命周期优先级：`ended_at` 是显式结束时刻，优先于 `expires_at`；投影仅在 `now < ended_at` 且 `now < expires_at`（两者存在时）时活跃。若两者均存在，较早者决定退出时间；显式结束只补充原因，不延长自然到期。`ended_at <= at` 视为无效 episode 并进入诊断，不删除原行。
+生命周期统一按最早截止时刻退出：`effective_end_at = min(ended_at, expires_at)`（忽略 NULL；两者都 NULL 时无硬截止）。投影仅在 `now < effective_end_at` 时活跃。`ended_at` 只记录显式结束及其 `end_reason`，不能延长 `expires_at`；若 `expires_at` 更早，按自然到期退出；若 `ended_at` 更早或相同，按显式结束记录原因。两者均不删除 episode。`ended_at <= at` 视为无效 episode 并进入诊断，不删除原行。
 
 保留既有 `at/emotion/intensity/cause/target/half_life_s/expires_at/appraisal_id/msg_ref`，避免破坏旧查询。旧 `target` 字段继续作为兼容展示文本；新逻辑以 target_type/id 为准。
 
@@ -218,7 +220,8 @@ DDL 验收还必须断言：`UNIQUE(event_id, appraisal_version)` 能拒绝同�
 - `experiencer_id` 裸 ID、已带匹配前缀、前缀冲突、unknown+非空 ID、旧式 `experiencer='self:<id>'`。
 - 同一 episode 同时含 `id/episodeId/episode_id` 与 `appraisalId/appraisal_id` 时 sourceRefs 全保留且去重。
 - unknown-only 输入 `primaryForSelf=null`；owner/third_party 不进入 selfEmotions；只有 self 且置信度过门槛才 injectable。
-- event dedupe_key 唯一；同 event 多 appraisal items；appraisal version/supersedes 链。
+- event dedupe_key 唯一（旧行公式 `legacy:event:<event_id>`）；同 event 多 appraisal items；appraisal version/supersedes 链。
+- appraisal 与 appraisal_items 的 confidence 缺失、规则默认值（0.5/0.7）和校准值必须由 `confidence_kind` + `confidence_source` 区分；旧行统一 `legacy_unclassified/legacy_migration`，不得按数值猜测来源。
 - target_type=tool 迁移与旧查询兼容。
 - 旧数据迁移矩阵：unknown/known-self/owner/third_party shadow 分类及统计。
 - 同一 target 上正负情绪并存；不同 target 不合并。
@@ -233,7 +236,7 @@ DDL 验收还必须断言：`UNIQUE(event_id, appraisal_version)` 能拒绝同�
 
 ## 8. 分阶段实施
 
-- EI-2A：锁定数据契约与 schema migration；新增字段/表和 migration tests，旧路径不切换。
+- EI-2A：锁定数据契约与 schema migration；新增 persona 侧 event/appraisal/items/episode/source 字段与表、migration tests，旧路径不切换。**不创建或运行 outbox/inbox 表**；跨插件 outbox/inbox DDL、ACK 与运行策略统一留到 EI-2D，避免 2A 扩大成跨仓库协议实施。
 - EI-2B：接入 appraisal → episode 的事务化写入和 typed source refs。
 - EI-2C：实现投影 API，shadow-only，与 EI-1 纯函数对齐。
 - EI-2D：outbox/inbox 契约及 persona-memory 隔离集成测试。
@@ -242,10 +245,10 @@ DDL 验收还必须断言：`UNIQUE(event_id, appraisal_version)` 能拒绝同�
 
 ## 9. 未决项（不得自行拍板）
 
-1. `owner` 稳定 ID 应使用现有 DSH user ID、persona relationship peer ID，还是独立 UUID；实施前要统一。
-2. third_party 去重策略：会话内临时 ID、用户确认联系人 ID，还是不跨会话关联。
+1. `owner` 稳定 ID：推荐使用一次生成、跨受信任 DSHA 设备共享的 opaque UUID（不直接使用 DSH 登录 ID、手机号或其他外部账号标识）；是否采用该方案由项目负责人最终确认。EI-2A 可将 owner 保持 unknown/空 ID，不因该决策阻塞 schema migration。
+2. `third_party` 身份策略裁决为会话内 opaque 临时 ID，不跨会话关联；除非未来有明确用户确认和独立授权，不使用联系人 ID 或外部通讯录身份。
 3. sourceRefs 中 raw_message/tool_call 的稳定引用由哪个插件提供；不能复制原始正文。
-4. Emotion episode 的显式结束条件与默认 half-life/expiresAt 的产品语义。
+4. Emotion episode 的硬截止语义已按 §3.3 冻结为 ended_at 与 expires_at 取较早者；half-life 只控制强度衰减，不等同于生命周期硬截止。
 5. Memory 侧是否仅做关联检索，或允许情绪影响回忆排序；本提案默认只做关联，不改变事实权重、召回排序和自动注入。
 6. outbox 重试/保留期与事件纠错/撤回语义。
 7. 是否需要保留 legacy confidence threshold 0.65；它是工程影子评估阈值，不是心理学真值。
@@ -303,3 +306,16 @@ DDL 验收还必须断言：`UNIQUE(event_id, appraisal_version)` 能拒绝同�
 
 ### 12.3 实施门禁
 EI-1 修复分支已完成代码隔离验收：定向 21/21、全量 324/324，0 fail、0 skip；状态为“代码隔离验收 PASS，DSHA/负责人设备复验 NOT RUN”，不得表述为生产或集成 PASS。EI-2 仍为设计提案；EI-2A NOT RUN，仅可在本提案再次评审并由负责人明确授权后开始。生产 DB、生产注入、staging、部署和重启仍需单独授权。
+
+### 12.4 本轮 GPT 复核裁决（2026-11-21；设计修订，不构成实施授权）
+
+1. **Confidence 语义（B1，设计缺口已补）**：`emotion_appraisal` 与 `emotion_appraisal_items` 均持久化 `confidence_kind` / `confidence_source`。`confidence_kind` 取 `unknown | rule_default | calibrated | legacy_unclassified`；来源字段记录具体入口/规则或校准模型版本。规则默认 0.5 与 0.7 均属于 `rule_default`，具体数值由 confidence 保存、来源字段说明来自哪个入口/规则。缺失值必须标 `unknown`，不得伪装成 0.5/0.7 的已知置信；旧行统一标 `legacy_unclassified`，不根据旧数值反推来源。原 appraisal 旧列保持兼容，不在本轮重建表；新消费者必须先检查 kind。
+2. **Legacy dedupe_key（B2，公式已冻结）**：旧 event 行回填 `legacy:event:<event_id>`，event_id 取 `emotion_event.id`；缺失 source_kind 补 `legacy`，已有非空值保留。迁移必须以 fixture 证明唯一、幂等且不覆盖已有 key。
+3. **生命周期（D3，已裁决）**：`effective_end_at` 是非空 `ended_at` 与 `expires_at` 的最小值；较早者决定退出。`end_reason` 只解释显式结束，不延长自然到期；half-life 仅用于强度衰减。
+4. **Owner ID（D1，保留负责人确认）**：推荐跨受信任设备共享的 opaque UUID，不直接绑定 DSH 登录 ID/手机号/外部账号；EI-2A 可暂用 unknown/空 ID。此项需负责人最终确认，但不阻塞 schema-only 2A。
+5. **Third-party ID（D2，临时策略已裁决）**：采用会话内 opaque 临时 ID，不跨会话关联；不读取联系人/通讯录 ID，除非未来有单独确认和授权。
+6. **旧 348 条（D4，已裁决）**：迁移时全部先落 unknown；known-self/owner/third_party 只作为 shadow 候选统计，不自动升级，不改变旧状态、不注入。
+7. **0.65/0.45 阈值（D5，已裁决）**：保留为工程 shadow 阈值，明确标注“未校准、非心理学真值”；校准另列后续阶段，不得写入 confidence 字段冒充校准值。
+8. **legacy fallback（D6，已裁决）**：`stateFor('self')` 无新模型 self 投影时可返回旧视图，但必须带 `legacyFallback:true`；不得作为可信 self 注入。owner/third_party/tool 不得复用。
+9. **Outbox/inbox（D7，范围裁决）**：EI-2A 不建、不运行 outbox/inbox；相关 DDL、传输、ACK、重试统一放 EI-2D。EI-2A 只做 persona 本地 schema/migration/fixtures，不跨仓库。
+10. **启动门禁**：以上是设计裁决与文档修订，不是 EI-2A 授权。EI-2A 仍须负责人在当前对话明确授权后才能实施；生产 DB、staging、部署、重启另需单独授权。
